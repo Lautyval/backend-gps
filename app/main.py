@@ -10,7 +10,7 @@ from app.api.traccar.services import TraccarService
 # Routers
 from app.api.user.user_route import router as auth_router
 from app.api.enterprise.enterprise_route import router as enterprise_router
-from app.api.traccar.traccar_route import router as traccar_router
+from app.api.traccar.traccar_route import router as traccar_router, public_router
 from app.api.enterprise_user.enterprise_user_route import router as fleet_mgmt_router
 from app.api.routers.reports import router as reports_router
 
@@ -44,6 +44,7 @@ app.include_router(enterprise_router)
 app.include_router(traccar_router)
 app.include_router(fleet_mgmt_router)
 app.include_router(reports_router)
+app.include_router(public_router)
 
 @app.get("/")
 async def root():

@@ -1,14 +1,15 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
-from typing import List
+from typing import List, Optional
 from datetime import datetime
 
 from app.auth.dependencies import get_active_enterprise
 from app.api.enterprise.enterprise_model import Enterprise
-from app.api.enterprise_user.enterprise_user_model import POI, MaintenanceRecord
+from app.api.enterprise_user.enterprise_user_model import POI, MaintenanceRecord, AlertRule
 from app.api.enterprise_user.enterprise_user_schema import (
     POICreate, POIResponse,
-    MaintenanceCreate, MaintenanceResponse
+    MaintenanceCreate, MaintenanceResponse,
+    AlertRuleCreate, AlertRuleResponse
 )
 from app.db.gps_db import get_async_db_session
 
@@ -89,4 +90,77 @@ async def delete_maintenance(device_id: int, enterprise: Enterprise = Depends(ge
         await db.delete(db_rec)
         await db.commit()
         return {"status": "deleted"}
+
+# ── Alert Rules ──────────────────────────────────────────────────────────────
+
+@router.get("/alert-rules", response_model=List[AlertRuleResponse])
+async def get_alert_rules(enterprise: Enterprise = Depends(get_active_enterprise)):
+    async with get_async_db_session(enterprise.id) as db:
+        result = await db.execute(select(AlertRule).order_by(AlertRule.created_at.desc()))
+        return result.scalars().all()
+
+@router.post("/alert-rules", response_model=AlertRuleResponse)
+async def create_alert_rule(rule_in: AlertRuleCreate, enterprise: Enterprise = Depends(get_active_enterprise)):
+    async with get_async_db_session(enterprise.id) as db:
+        db_rule = AlertRule(**rule_in.model_dump())
+        db.add(db_rule)
+        await db.commit()
+        await db.refresh(db_rule)
+        return db_rule
+
+@router.put("/alert-rules/{rule_id}", response_model=AlertRuleResponse)
+async def update_alert_rule(rule_id: int, rule_in: AlertRuleCreate, enterprise: Enterprise = Depends(get_active_enterprise)):
+    async with get_async_db_session(enterprise.id) as db:
+        result = await db.execute(select(AlertRule).where(AlertRule.id == rule_id))
+        db_rule = result.scalar_one_or_none()
+        if not db_rule: raise HTTPException(status_code=404, detail="Regla no encontrada")
+        for k, v in rule_in.model_dump().items():
+            setattr(db_rule, k, v)
+        await db.commit()
+        await db.refresh(db_rule)
+        return db_rule
+
+@router.delete("/alert-rules/{rule_id}")
+async def delete_alert_rule(rule_id: int, enterprise: Enterprise = Depends(get_active_enterprise)):
+    async with get_async_db_session(enterprise.id) as db:
+        result = await db.execute(select(AlertRule).where(AlertRule.id == rule_id))
+        db_rule = result.scalar_one_or_none()
+        if not db_rule: raise HTTPException(status_code=404, detail="Regla no encontrada")
+        await db.delete(db_rule)
+        await db.commit()
+        return {"status": "deleted"}
+
+# ── Share Tokens (JWT-based, no DB required) ─────────────────────────────────
+
+import os, time
+from jose import jwt
+from pydantic import BaseModel as PydanticBase
+
+_JWT_SECRET = os.getenv("JWT_SECRET", "dev-secret")
+_ALGO = "HS256"
+
+class ShareTokenRequest(PydanticBase):
+    device_id: int
+    expires_hours: int = 24
+
+class ShareTokenResponse(PydanticBase):
+    token: str
+    url: str
+    device_id: int
+    expires_at: str
+
+@router.post("/share", response_model=ShareTokenResponse)
+async def create_share_token(req: ShareTokenRequest, enterprise: Enterprise = Depends(get_active_enterprise)):
+    exp = int(time.time()) + req.expires_hours * 3600
+    payload = {"device_id": req.device_id, "exp": exp, "type": "share"}
+    token = jwt.encode(payload, _JWT_SECRET, algorithm=_ALGO)
+    # Build public URL — use request base or env var
+    base_url = os.getenv("PUBLIC_URL", "http://localhost:5175")
+    url = f"{base_url}/?track={token}"
+    return ShareTokenResponse(
+        token=token,
+        url=url,
+        device_id=req.device_id,
+        expires_at=datetime.utcfromtimestamp(exp).isoformat()
+    )
 
