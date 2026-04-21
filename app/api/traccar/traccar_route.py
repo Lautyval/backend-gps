@@ -8,7 +8,8 @@ from app.auth.dependencies import get_current_user
 from .schema import (
     Device, DeviceCreate, DeviceUpdate,
     Geofence, GeofenceCreate,
-    Driver, DriverCreate, DriverUpdate
+    Driver, DriverCreate, DriverUpdate,
+    RoutePoint
 )
 from .services import TraccarService
 
@@ -101,3 +102,9 @@ async def delete_driver(id: int, traccar: TraccarService = Depends(get_traccar_s
 @router.post("/drivers/{driver_id}/assign/{device_id}", response_model=Driver, dependencies=[Depends(get_current_user)])
 async def assign_driver(driver_id: int, device_id: int, traccar: TraccarService = Depends(get_traccar_service)):
     return await traccar.assign_driver_to_device(driver_id, device_id)
+
+# --- Route History ---
+
+@router.get("/history/{device_id}", response_model=List[RoutePoint], dependencies=[Depends(get_current_user)])
+async def get_route_history(device_id: int, from_time: str, to_time: str, traccar: TraccarService = Depends(get_traccar_service)):
+    return await traccar.get_route_history(device_id, from_time, to_time)

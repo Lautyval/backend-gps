@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from datetime import datetime, timedelta, timezone
 
-from app.db.main_db import init_enterprise_db, migrate_enterprise_db, create_database
+from app.db.main_db import init_enterprise_db, create_database
 from app.db.dynamic_gps_db import init_enterprise_location_db
 from app.api.user.user_model import User
 from app.api.enterprise.enterprise_model import Enterprise
@@ -65,7 +65,6 @@ async def perform_initial_setup():
     # These are sync (from main_db.py)
     create_database()
     init_enterprise_db()
-    migrate_enterprise_db()
     
     # This is async
     await seed_demo_data()

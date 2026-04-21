@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from datetime import datetime
 from typing import Optional, List
 
@@ -23,3 +23,7 @@ class Token(BaseModel):
     access_token: str
     token_type: str
     user: dict
+
+class UserLogin(BaseModel):
+    email: str = Field(example="ejemplo@keuken.com")
+    password: str = Field(example="contraseniasegura123")

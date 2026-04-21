@@ -6,7 +6,7 @@ from datetime import datetime, timezone, timedelta
 
 from app.auth.dependencies import get_main_session, get_current_user
 from app.api.user.user_model import User
-from app.api.user.user_schema import Token, UserCreate, UserResponse
+from app.api.user.user_schema import Token, UserCreate, UserResponse, UserLogin
 from app.utils.login_user_utils import verify_password, get_password_hash
 from app.auth.jwt_handler import create_access_token
 
@@ -14,13 +14,13 @@ router = APIRouter(prefix="/auth", tags=["Auth"])
 
 @router.post("/login", response_model=Token)
 async def login(
-    form_data: OAuth2PasswordRequestForm = Depends(),
+    user_login: UserLogin,
     session: AsyncSession = Depends(get_main_session)
 ):
-    result = await session.execute(select(User).where(User.email == form_data.username))
+    result = await session.execute(select(User).where(User.email == user_login.email))
     user = result.scalar_one_or_none()
     
-    if not user or not verify_password(form_data.password, user.password):
+    if not user or not verify_password(user_login.password, user.password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Email o contraseña incorrectos",
