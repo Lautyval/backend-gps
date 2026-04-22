@@ -21,8 +21,12 @@ class POIResponse(POIBase):
 class MaintenanceBase(BaseModel):
     serviceName: str
     intervalDays: int
+    intervalKm: int = 10000
     lastServiceDate: str
+    lastServiceKm: float = 0
+    alertStrategy: str = 'both'
     notes: Optional[str] = None
+    model_config = ConfigDict(from_attributes=True)
 
 class MaintenanceCreate(MaintenanceBase):
     device_id: int

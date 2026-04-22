@@ -33,9 +33,12 @@ class MaintenanceRecord(BaseGPS):
     device_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     serviceName: Mapped[str] = mapped_column(String)
     intervalDays: Mapped[int] = mapped_column(Integer)
+    intervalKm: Mapped[int] = mapped_column(Integer, default=10000)
     lastServiceDate: Mapped[str] = mapped_column(String) # "YYYY-MM-DD"
+    lastServiceKm: Mapped[float] = mapped_column(Float, default=0)
+    alertStrategy: Mapped[str] = mapped_column(String, default='both') # 'days', 'km', 'both'
     notes: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 class AlertRule(BaseGPS):
     __tablename__ = "alert_rule"
