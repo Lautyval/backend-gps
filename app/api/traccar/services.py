@@ -2,8 +2,9 @@ import httpx
 import logging
 import random
 import math
+import asyncio
 from datetime import datetime, timezone, timedelta
-from typing import List
+from typing import List, Dict, Any
 
 from app.api.traccar.config import settings
 from .schema import (
@@ -557,3 +558,65 @@ class TraccarService:
                     d["attributes"]["assignedDeviceId"] = device_id
                     return Driver(**d)
             raise
+
+class FleetBroadcaster:
+    def __init__(self, traccar_service: TraccarService):
+        self.traccar = traccar_service
+        self.subscribers: List[asyncio.Queue] = []
+        self._running = False
+        self._task = None
+
+    async def start(self):
+        if self._running:
+            return
+        self._running = True
+        self._task = asyncio.create_task(self._run())
+        logger.info("FleetBroadcaster iniciado")
+
+    async def stop(self):
+        self._running = False
+        if self._task:
+            self._task.cancel()
+        logger.info("FleetBroadcaster detenido")
+
+    async def _run(self):
+        last_fetch = datetime.now(timezone.utc) - timedelta(minutes=1)
+        while self._running:
+            try:
+                positions = await self.traccar.get_positions()
+                now = datetime.now(timezone.utc)
+                events = await self.traccar.get_events(
+                    from_time=(last_fetch - timedelta(minutes=2)).strftime('%Y-%m-%dT%H:%M:%SZ'),
+                    to_time=now.strftime('%Y-%m-%dT%H:%M:%SZ')
+                )
+                last_fetch = now
+                
+                payload = {
+                    "type": "update",
+                    "positions": [p.model_dump() for p in positions],
+                    "events": [e.model_dump() for e in events]
+                }
+                
+                # Broadcast to all queues
+                for queue in self.subscribers[:]:
+                    try:
+                        # Si la cola está llena, removemos el item más viejo para no bloquear el broadcast
+                        if queue.full():
+                            queue.get_nowait()
+                        await queue.put(payload)
+                    except Exception:
+                        pass
+                
+            except Exception as e:
+                logger.error(f"Error en FleetBroadcaster: {e}")
+            
+            await asyncio.sleep(2.0)
+
+    def subscribe(self) -> asyncio.Queue:
+        queue = asyncio.Queue(maxsize=10)
+        self.subscribers.append(queue)
+        return queue
+
+    def unsubscribe(self, queue: asyncio.Queue):
+        if queue in self.subscribers:
+            self.subscribers.remove(queue)

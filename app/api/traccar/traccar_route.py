@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 from typing import List
 from datetime import datetime, timedelta, timezone
 import asyncio
@@ -6,7 +7,10 @@ import logging
 import os
 
 from jose import jwt, JWTError
-from app.auth.dependencies import get_current_user
+from app.auth.dependencies import get_current_user, get_active_enterprise
+from app.api.enterprise.enterprise_model import Enterprise
+from app.db.gps_db import get_async_db_session
+from sqlalchemy import select
 from .schema import (
     Device, DeviceCreate, DeviceUpdate,
     Geofence, GeofenceCreate,
@@ -14,6 +18,9 @@ from .schema import (
     RoutePoint
 )
 from .services import TraccarService
+from app.api.devices.device_model import Device as DeviceModel
+from app.api.geofences.geofence_model import Geofence as GeofenceModel
+from app.api.drivers.driver_model import Driver as DriverModel
 
 logger = logging.getLogger("app_logger")
 router = APIRouter(prefix="/fleet", tags=["Fleet"])
@@ -21,32 +28,72 @@ router = APIRouter(prefix="/fleet", tags=["Fleet"])
 def get_traccar_service():
     return TraccarService()
 
-@router.get("/status", response_model=List[Device], dependencies=[Depends(get_current_user)])
-async def get_fleet_status(traccar: TraccarService = Depends(get_traccar_service)):
-    return await traccar.get_devices()
+@router.get("/status", response_model=List[Device])
+async def get_fleet_status(
+    enterprise: Enterprise = Depends(get_active_enterprise),
+    traccar: TraccarService = Depends(get_traccar_service)
+):
+    # Fetch all devices from Traccar
+    all_devices = await traccar.get_devices()
+    
+    # Fetch allowed traccar_device_ids from tenant DB
+    async with get_async_db_session(enterprise.id) as db:
+        result = await db.execute(select(DeviceModel.traccar_device_id))
+        allowed_ids = {row[0] for row in result.all()}
+    
+    # Filter
+    return [d for d in all_devices if d.id in allowed_ids]
 
-@router.websocket("/stream")
-async def fleet_stream(websocket: WebSocket, traccar: TraccarService = Depends(get_traccar_service)):
-    await websocket.accept()
-    logger.info("WS: Cliente conectado.")
-    last_fetch = datetime.now(timezone.utc) - timedelta(minutes=1)
-    try:
-        while True:
-            positions = await traccar.get_positions()
-            now = datetime.now(timezone.utc)
-            events = await traccar.get_events(
-                from_time=(last_fetch - timedelta(minutes=2)).strftime('%Y-%m-%dT%H:%M:%SZ'),
-                to_time=now.strftime('%Y-%m-%dT%H:%M:%SZ')
-            )
-            last_fetch = now
-            await websocket.send_json({
-                "type": "update",
-                "positions": [p.model_dump() for p in positions],
-                "events": [e.model_dump() for e in events]
-            })
-            await asyncio.sleep(2.0)
-    except WebSocketDisconnect:
-        logger.info("WS: Cliente desconectado.")
+@router.get("/stream")
+async def fleet_stream(
+    request: Request,
+    token: str = Query(None),
+):
+    # Auth & Enterprise detection
+    from app.auth.jwt_handler import decode_access_token
+    from app.api.user.user_model import User
+    from app.db.main_db import AsyncSessionMain
+    import json
+
+    payload = decode_access_token(token) if token else None
+    if not payload:
+        raise HTTPException(status_code=401, detail="No autorizado")
+
+    user_id = int(payload["sub"])
+    async with AsyncSessionMain() as session:
+        result = await session.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        if not user or not user.enterprises:
+            raise HTTPException(status_code=403, detail="Sin empresa asignada")
+        enterprise_id = user.enterprises[0].id
+
+    broadcaster = request.app.state.broadcaster
+    queue = broadcaster.subscribe()
+
+    async def event_generator():
+        try:
+            while True:
+                # Si el cliente cerró la conexión, salimos
+                if await request.is_disconnected():
+                    break
+                
+                # Wait for data from broadcaster
+                data = await queue.get()
+                
+                # Get allowed device IDs for this enterprise
+                async with get_async_db_session(enterprise_id) as db:
+                    res = await db.execute(select(DeviceModel.traccar_device_id))
+                    allowed_ids = {row[0] for row in res.all()}
+
+                # Filter positions and events
+                data["positions"] = [p for p in data["positions"] if p["deviceId"] in allowed_ids]
+                data["events"] = [e for e in data["events"] if e["deviceId"] in allowed_ids]
+
+                yield f"data: {json.dumps(data)}\n\n"
+        finally:
+            broadcaster.unsubscribe(queue)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 # --- Devices CRUD ---
 
@@ -65,9 +112,16 @@ async def delete_device(id: int, traccar: TraccarService = Depends(get_traccar_s
 
 # --- Geofences CRUD ---
 
-@router.get("/geofences", response_model=List[Geofence], dependencies=[Depends(get_current_user)])
-async def get_geofences(traccar: TraccarService = Depends(get_traccar_service)):
-    return await traccar.get_geofences()
+@router.get("/geofences", response_model=List[Geofence])
+async def get_geofences(
+    enterprise: Enterprise = Depends(get_active_enterprise),
+    traccar: TraccarService = Depends(get_traccar_service)
+):
+    all_geofences = await traccar.get_geofences()
+    async with get_async_db_session(enterprise.id) as db:
+        result = await db.execute(select(GeofenceModel.traccar_geofence_id))
+        allowed_ids = {row[0] for row in result.all()}
+    return [g for g in all_geofences if g.id in allowed_ids]
 
 @router.post("/geofences", response_model=Geofence, dependencies=[Depends(get_current_user)])
 async def create_geofence(geofence: GeofenceCreate, traccar: TraccarService = Depends(get_traccar_service)):
@@ -84,9 +138,16 @@ async def delete_geofence(id: int, traccar: TraccarService = Depends(get_traccar
 
 # --- Drivers CRUD ---
 
-@router.get("/drivers", response_model=List[Driver], dependencies=[Depends(get_current_user)])
-async def get_drivers(traccar: TraccarService = Depends(get_traccar_service)):
-    return await traccar.get_drivers()
+@router.get("/drivers", response_model=List[Driver])
+async def get_drivers(
+    enterprise: Enterprise = Depends(get_active_enterprise),
+    traccar: TraccarService = Depends(get_traccar_service)
+):
+    all_drivers = await traccar.get_drivers()
+    async with get_async_db_session(enterprise.id) as db:
+        result = await db.execute(select(DriverModel.traccar_driver_id))
+        allowed_ids = {row[0] for row in result.all()}
+    return [d for d in all_drivers if d.id in allowed_ids]
 
 @router.post("/drivers", response_model=Driver, dependencies=[Depends(get_current_user)])
 async def create_driver(driver: DriverCreate, traccar: TraccarService = Depends(get_traccar_service)):
@@ -107,8 +168,20 @@ async def assign_driver(driver_id: int, device_id: int, traccar: TraccarService 
 
 # --- Route History ---
 
-@router.get("/history/{device_id}", response_model=List[RoutePoint], dependencies=[Depends(get_current_user)])
-async def get_route_history(device_id: int, from_time: str, to_time: str, traccar: TraccarService = Depends(get_traccar_service)):
+@router.get("/history/{device_id}", response_model=List[RoutePoint])
+async def get_route_history(
+    device_id: int, 
+    from_time: str, 
+    to_time: str, 
+    enterprise: Enterprise = Depends(get_active_enterprise),
+    traccar: TraccarService = Depends(get_traccar_service)
+):
+    # Verify device ownership
+    async with get_async_db_session(enterprise.id) as db:
+        result = await db.execute(select(DeviceModel).where(DeviceModel.traccar_device_id == device_id))
+        if not result.scalar_one_or_none():
+            raise HTTPException(status_code=403, detail="Acceso denegado a esta unidad.")
+            
     return await traccar.get_route_history(device_id, from_time, to_time)
 
 # --- Corridor Geofence ---

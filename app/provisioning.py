@@ -44,8 +44,8 @@ async def seed_demo_data():
             logger.info("Sembrando usuario 'admin'...")
             admin_user = User(
                 name="Administrador",
-                email="admin@gps.com",
-                password=get_password_hash("admin123"),
+                email="admin",
+                password=get_password_hash("admin"),
                 expiration_date=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=30),
                 alive=True
             )

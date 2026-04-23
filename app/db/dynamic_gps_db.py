@@ -9,10 +9,17 @@ import asyncio
 import anyio
 
 from app.db.base_gps import BaseGPS
-from app.logger_config import logger
+from app.utils.logger_config import logger
 
-# Import our project models
-from app.api.enterprise_user.enterprise_user_model import POI, MaintenanceRecord
+# Import our project models to register them with BaseGPS
+from app.api.pois.poi_model import POI
+from app.api.maintenance.maintenance_model import MaintenanceRecord
+from app.api.devices.device_model import Device
+from app.api.geofences.geofence_model import Geofence
+from app.api.alert_rules.alert_rules_model import AlertRule
+from app.api.drivers.driver_model import Driver
+
+
 
 load_dotenv()
 postgres_user = os.getenv('POSTGRES_USER')

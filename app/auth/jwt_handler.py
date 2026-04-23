@@ -6,7 +6,7 @@ import os
 load_dotenv()
 
 JWT_KEY = os.getenv("JWT_SECRET")
-ALGORITHM = os.getenv("ALGORITHM", "HS256")
+ALGORITHM = os.getenv("ALGORITHM")
 EXPIRATION = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 60))
 
 def create_access_token(data: dict, expires_delta: timedelta | None = None):

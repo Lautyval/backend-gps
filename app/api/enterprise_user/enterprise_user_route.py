@@ -1,166 +1,57 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
-from typing import List, Optional
-from datetime import datetime
-
-from app.auth.dependencies import get_active_enterprise
-from app.api.enterprise.enterprise_model import Enterprise
-from app.api.enterprise_user.enterprise_user_model import POI, MaintenanceRecord, AlertRule
+from sqlalchemy.ext.asyncio import AsyncSession
+from typing import List
+from app.auth.dependencies import get_main_session, get_current_user
 from app.api.enterprise_user.enterprise_user_schema import (
-    POICreate, POIResponse,
-    MaintenanceCreate, MaintenanceResponse,
-    AlertRuleCreate, AlertRuleResponse
+    EnterpriseUserLinkResponse, EnterpriseUserLinkCreate, EnterpriseUserLinkUpdate
 )
-from app.db.gps_db import get_async_db_session
+from app.api.enterprise_user import enterprise_user_repository as repository
 
-router = APIRouter(prefix="/fleet", tags=["Fleet Management"])
+router = APIRouter(prefix="/enterprise-users", tags=["Enterprise Users"])
 
-@router.get("/pois", response_model=List[POIResponse])
-async def get_pois(enterprise: Enterprise = Depends(get_active_enterprise)):
-    async with get_async_db_session(enterprise.id) as db:
-        result = await db.execute(select(POI))
-        return result.scalars().all()
+@router.get("/enterprise/{enterprise_id}", response_model=List[EnterpriseUserLinkResponse])
+async def list_users_by_enterprise(
+    enterprise_id: int,
+    session: AsyncSession = Depends(get_main_session),
+    current_payload: dict = Depends(get_current_user)
+):
+    return await repository.get_users_by_enterprise(session, enterprise_id)
 
-@router.post("/pois", response_model=POIResponse)
-async def create_poi(poi_in: POICreate, enterprise: Enterprise = Depends(get_active_enterprise)):
-    async with get_async_db_session(enterprise.id) as db:
-        db_poi = POI(**poi_in.model_dump())
-        db.add(db_poi)
-        await db.commit()
-        await db.refresh(db_poi)
-        return db_poi
+@router.get("/user/{user_id}", response_model=List[EnterpriseUserLinkResponse])
+async def list_enterprises_by_user(
+    user_id: int,
+    session: AsyncSession = Depends(get_main_session),
+    current_payload: dict = Depends(get_current_user)
+):
+    return await repository.get_enterprises_by_user(session, user_id)
 
-@router.put("/pois/{poi_id}", response_model=POIResponse)
-async def update_poi(poi_id: str, poi_in: POICreate, enterprise: Enterprise = Depends(get_active_enterprise)):
-    async with get_async_db_session(enterprise.id) as db:
-        result = await db.execute(select(POI).where(POI.id == poi_id))
-        db_poi = result.scalar_one_or_none()
-        if not db_poi: raise HTTPException(status_code=404, detail="POI no encontrado")
-        
-        update_data = poi_in.model_dump(exclude_unset=True)
-        for k, v in update_data.items():
-            setattr(db_poi, k, v)
-            
-        await db.commit()
-        await db.refresh(db_poi)
-        return db_poi
+@router.post("/", response_model=EnterpriseUserLinkResponse)
+async def link_user_to_enterprise(
+    link_in: EnterpriseUserLinkCreate,
+    session: AsyncSession = Depends(get_main_session),
+    current_payload: dict = Depends(get_current_user)
+):
+    return await repository.create_link(session, link_in)
 
-@router.delete("/pois/{poi_id}")
-async def delete_poi(poi_id: str, enterprise: Enterprise = Depends(get_active_enterprise)):
-    async with get_async_db_session(enterprise.id) as db:
-        result = await db.execute(select(POI).where(POI.id == poi_id))
-        db_poi = result.scalar_one_or_none()
-        if not db_poi: raise HTTPException(status_code=404, detail="POI no encontrado")
-        await db.delete(db_poi)
-        await db.commit()
-        return {"status": "deleted"}
+@router.put("/{link_id}", response_model=EnterpriseUserLinkResponse)
+async def update_user_link(
+    link_id: int,
+    link_in: EnterpriseUserLinkUpdate,
+    session: AsyncSession = Depends(get_main_session),
+    current_payload: dict = Depends(get_current_user)
+):
+    db_link = await repository.update_link(session, link_id, link_in)
+    if not db_link:
+        raise HTTPException(status_code=404, detail="Relación no encontrada")
+    return db_link
 
-@router.get("/maintenance", response_model=List[MaintenanceResponse])
-async def get_all_maintenance(enterprise: Enterprise = Depends(get_active_enterprise)):
-    async with get_async_db_session(enterprise.id) as db:
-        result = await db.execute(select(MaintenanceRecord))
-        return result.scalars().all()
-
-@router.put("/maintenance/{device_id}", response_model=MaintenanceResponse)
-async def upsert_maintenance(device_id: int, record_in: MaintenanceCreate, enterprise: Enterprise = Depends(get_active_enterprise)):
-    async with get_async_db_session(enterprise.id) as db:
-        result = await db.execute(select(MaintenanceRecord).where(MaintenanceRecord.device_id == device_id))
-        db_rec = result.scalar_one_or_none()
-        
-        if db_rec:
-            update_data = record_in.model_dump(exclude_unset=True)
-            for k, v in update_data.items():
-                setattr(db_rec, k, v)
-            db_rec.updated_at = datetime.utcnow()
-        else:
-            db_rec = MaintenanceRecord(**record_in.model_dump())
-            db_rec.device_id = device_id
-            
-        db.add(db_rec)
-        await db.commit()
-        await db.refresh(db_rec)
-        return db_rec
-
-@router.delete("/maintenance/{device_id}")
-async def delete_maintenance(device_id: int, enterprise: Enterprise = Depends(get_active_enterprise)):
-    async with get_async_db_session(enterprise.id) as db:
-        result = await db.execute(select(MaintenanceRecord).where(MaintenanceRecord.device_id == device_id))
-        db_rec = result.scalar_one_or_none()
-        if not db_rec: raise HTTPException(status_code=404, detail="Registro no encontrado")
-        await db.delete(db_rec)
-        await db.commit()
-        return {"status": "deleted"}
-
-# ── Alert Rules ──────────────────────────────────────────────────────────────
-
-@router.get("/alert-rules", response_model=List[AlertRuleResponse])
-async def get_alert_rules(enterprise: Enterprise = Depends(get_active_enterprise)):
-    async with get_async_db_session(enterprise.id) as db:
-        result = await db.execute(select(AlertRule).order_by(AlertRule.created_at.desc()))
-        return result.scalars().all()
-
-@router.post("/alert-rules", response_model=AlertRuleResponse)
-async def create_alert_rule(rule_in: AlertRuleCreate, enterprise: Enterprise = Depends(get_active_enterprise)):
-    async with get_async_db_session(enterprise.id) as db:
-        db_rule = AlertRule(**rule_in.model_dump())
-        db.add(db_rule)
-        await db.commit()
-        await db.refresh(db_rule)
-        return db_rule
-
-@router.put("/alert-rules/{rule_id}", response_model=AlertRuleResponse)
-async def update_alert_rule(rule_id: int, rule_in: AlertRuleCreate, enterprise: Enterprise = Depends(get_active_enterprise)):
-    async with get_async_db_session(enterprise.id) as db:
-        result = await db.execute(select(AlertRule).where(AlertRule.id == rule_id))
-        db_rule = result.scalar_one_or_none()
-        if not db_rule: raise HTTPException(status_code=404, detail="Regla no encontrada")
-        for k, v in rule_in.model_dump().items():
-            setattr(db_rule, k, v)
-        await db.commit()
-        await db.refresh(db_rule)
-        return db_rule
-
-@router.delete("/alert-rules/{rule_id}")
-async def delete_alert_rule(rule_id: int, enterprise: Enterprise = Depends(get_active_enterprise)):
-    async with get_async_db_session(enterprise.id) as db:
-        result = await db.execute(select(AlertRule).where(AlertRule.id == rule_id))
-        db_rule = result.scalar_one_or_none()
-        if not db_rule: raise HTTPException(status_code=404, detail="Regla no encontrada")
-        await db.delete(db_rule)
-        await db.commit()
-        return {"status": "deleted"}
-
-# ── Share Tokens (JWT-based, no DB required) ─────────────────────────────────
-
-import os, time
-from jose import jwt
-from pydantic import BaseModel as PydanticBase
-
-_JWT_SECRET = os.getenv("JWT_SECRET", "dev-secret")
-_ALGO = "HS256"
-
-class ShareTokenRequest(PydanticBase):
-    device_id: int
-    expires_hours: int = 24
-
-class ShareTokenResponse(PydanticBase):
-    token: str
-    url: str
-    device_id: int
-    expires_at: str
-
-@router.post("/share", response_model=ShareTokenResponse)
-async def create_share_token(req: ShareTokenRequest, enterprise: Enterprise = Depends(get_active_enterprise)):
-    exp = int(time.time()) + req.expires_hours * 3600
-    payload = {"device_id": req.device_id, "exp": exp, "type": "share"}
-    token = jwt.encode(payload, _JWT_SECRET, algorithm=_ALGO)
-    # Build public URL — use request base or env var
-    base_url = os.getenv("PUBLIC_URL", "http://localhost:5175")
-    url = f"{base_url}/?track={token}"
-    return ShareTokenResponse(
-        token=token,
-        url=url,
-        device_id=req.device_id,
-        expires_at=datetime.utcfromtimestamp(exp).isoformat()
-    )
-
+@router.delete("/{link_id}")
+async def unlink_user_from_enterprise(
+    link_id: int,
+    session: AsyncSession = Depends(get_main_session),
+    current_payload: dict = Depends(get_current_user)
+):
+    success = await repository.delete_link(session, link_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Relación no encontrada")
+    return {"status": "unlinked"}

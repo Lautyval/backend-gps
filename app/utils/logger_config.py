@@ -4,9 +4,6 @@ import os
 
 def setup_logger(file_name: str, logger_name: str = "app_logger", file_size_mb: int = 10, backup_count: int = 3):
     log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'logs')
-    # Use the absolute path provided in the requested tree if app is at the root
-    # The user's provided code assumes logs is sibling to app
-    # Tree shows: app/logs/
     log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
     
     os.makedirs(log_dir, exist_ok=True)

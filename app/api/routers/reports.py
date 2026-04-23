@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
-from typing import List, Optional
+from typing import List
 from ..traccar.schema import ReportSummary, ReportTrip, ReportStop, Alert
 from ..traccar.services import TraccarService
 import logging
