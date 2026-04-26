@@ -12,3 +12,5 @@ class Driver(BaseGPS):
     attributes = Column(JSON, nullable=True)
     disabled = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+

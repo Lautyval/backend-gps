@@ -146,6 +146,11 @@ class Driver(BaseModel):
     name: str
     uniqueId: str
     attributes: Dict[str, Any] = {}
+    assigned_vehicle_ids: List[str] = []
+    disabled: bool = False
+
+
+
 
 class DriverCreate(BaseModel):
     name: str

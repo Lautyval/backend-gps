@@ -506,8 +506,13 @@ class TraccarService:
             full_driver = Driver(**updated_data)
             full_driver.id = driver_id
 
-            # 3. Enviar a Traccar
-            response = await self.client.put(f"/api/drivers/{driver_id}", json=full_driver.model_dump())
+            # 3. Enviar a Traccar (excluyendo campos locales que Traccar no soporta)
+            payload = full_driver.model_dump()
+            payload.pop("assigned_vehicle_ids", None)
+            payload.pop("disabled", None)
+            
+            response = await self.client.put(f"/api/drivers/{driver_id}", json=payload)
+
             response.raise_for_status()
             data = response.json()
             return Driver(**data)
@@ -536,28 +541,40 @@ class TraccarService:
     async def assign_driver_to_device(self, driver_id: int, device_id: int) -> Driver:
         """Vincula un chofer a un dispositivo via attributes."""
         try:
-            # En un entorno real Traccar, podríamos usar /api/permissions
-            # Pero para esta implementación usaremos atributos para simplicidad y consulta rápida
-            drivers = await self.get_drivers()
-            driver = next((d for d in drivers if d.id == driver_id), None)
-            if not driver:
-                raise ValueError("Conductor no encontrado")
+            # En lugar de buscar todos los drivers, intentamos actualizar directamente
+            # Si estamos en modo real, necesitamos los atributos actuales para no pisarlos.
+            # Pero como nuestra arquitectura usa TraccarDriverUpdate que fusiona, podemos ser más directos.
             
-            # Actualizar atributos
-            attrs = driver.attributes or {}
-            attrs["assignedDeviceId"] = device_id
-            driver.attributes = attrs
-            
-            return await self.update_driver(driver_id, driver)
-        except Exception as e:
-            logger.error(f"Error vinculando chofer {driver_id} a dispositivo {device_id}: {e}")
+            # Para mayor seguridad en Traccar real, primero obtenemos el driver por ID
+            try:
+                response = await self.client.get(f"/api/drivers/{driver_id}")
+                if response.status_code == 200:
+                    driver_data = response.json()
+                    attrs = driver_data.get("attributes", {})
+                    attrs["assignedDeviceId"] = device_id
+                    driver_data["attributes"] = attrs
+                    
+                    # Update back
+                    update_resp = await self.client.put(f"/api/drivers/{driver_id}", json=driver_data)
+                    update_resp.raise_for_status()
+                    return Driver(**update_resp.json())
+            except Exception:
+                # Si falla (ej: estamos en MOCK), intentamos el flujo local
+                pass
+
             # Mock persistence fallback
             for d in self._mock_drivers:
                 if d["id"] == driver_id:
                     if "attributes" not in d: d["attributes"] = {}
                     d["attributes"]["assignedDeviceId"] = device_id
                     return Driver(**d)
+            
+            # Si no está en mocks tampoco, lanzamos error descriptivo
+            raise ValueError(f"Conductor con ID {driver_id} no encontrado en Traccar ni en Mocks")
+        except Exception as e:
+            logger.error(f"Error vinculando chofer {driver_id} a dispositivo {device_id}: {e}")
             raise
+
 
 class FleetBroadcaster:
     def __init__(self, traccar_service: TraccarService):

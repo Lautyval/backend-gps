@@ -45,7 +45,7 @@ async def login(
         }
     }
 
-@router.post("/register", response_model=UserResponse)
+@router.post("/register", response_model=Token)
 async def register(user_in: UserCreate, session: AsyncSession = Depends(get_main_session)):
     if await repository.get_by_email(session, user_in.email):
         raise HTTPException(
@@ -54,7 +54,24 @@ async def register(user_in: UserCreate, session: AsyncSession = Depends(get_main
         )
     
     hashed_password = get_password_hash(user_in.password)
-    return await repository.create(session, user_in, hashed_password)
+    user = await repository.create(session, user_in, hashed_password)
+    
+    # Generate token for immediate login after registration
+    access_token = create_access_token(data={"sub": str(user.id)})
+    enterprise = user.enterprises[0] if user.enterprises else None
+    
+    return {
+        "access_token": access_token, 
+        "token_type": "bearer",
+        "user": {
+            "name": user.name,
+            "email": user.email,
+            "enterprise_id": enterprise.id if enterprise else None,
+            "enterprise": enterprise.fullname if enterprise else "N/A",
+            "expiration": user.expiration_date
+        }
+    }
+
 
 @router.put("/{user_id}", response_model=UserResponse)
 async def update_user(

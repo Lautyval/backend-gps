@@ -29,6 +29,15 @@ async def get_by_traccar_id(db: AsyncSession, traccar_id: int) -> Optional[Devic
         logger.error(f"Error getting device by traccar_id {traccar_id}: {e}")
         raise e
 
+async def get_by_unique_id(db: AsyncSession, unique_id: str) -> Optional[Device]:
+    try:
+        result = await db.execute(select(Device).where(Device.unique_id == unique_id))
+        return result.scalar_one_or_none()
+    except Exception as e:
+        logger.error(f"Error getting device by unique_id {unique_id}: {e}")
+        raise e
+
+
 async def create(db: AsyncSession, device_in: DeviceCreate) -> Device:
     try:
         db_device = Device(**device_in.model_dump())

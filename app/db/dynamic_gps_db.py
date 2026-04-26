@@ -18,6 +18,7 @@ from app.api.devices.device_model import Device
 from app.api.geofences.geofence_model import Geofence
 from app.api.alert_rules.alert_rules_model import AlertRule
 from app.api.drivers.driver_model import Driver
+from app.api.share_links.share_link_model import ShareLink
 
 
 
